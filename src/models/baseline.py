@@ -3,7 +3,6 @@ import numpy as np
 import pandas as pd
 from pandas import IndexSlice as S
 
-
 class YesterdayPremiumModel:
     """
     Predict today's expected premium per hour as yesterday's realized premium
@@ -28,11 +27,10 @@ class YesterdayPremiumModel:
     def predict(self, df_today: pd.DataFrame) -> np.ndarray:
         if self._yesterday is None:
             return np.zeros(24)
-        # Ensure output aligns by hour 0..23
         vec = np.zeros(24)
         for h in range(24):
-            try:
-                vec[h] = float(self._yesterday.loc[(self._last_day, h)])
-            except Exception:
+            if h in self._yesterday.index:
+                vec[h] = float(self._yesterday.at[h])
+            else:
                 vec[h] = 0.0
         return vec

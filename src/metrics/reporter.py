@@ -3,6 +3,9 @@ import json
 from pathlib import Path
 import numpy as np
 import pandas as pd
+
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
@@ -32,3 +35,4 @@ class Reporter:
         plt.tight_layout()
         out = self.artifacts / "cumulative_pnl.png"
         plt.savefig(out)
+        plt.close()

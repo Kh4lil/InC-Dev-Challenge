@@ -1,15 +1,11 @@
 from __future__ import annotations
 import logging
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
-import numpy as np
 import pandas as pd
 
 from src.utils.config import Config, build_component
 from src.utils.logging import setup_logging
 from src.utils.calendar import entry_days
-
 
 log = logging.getLogger(__name__)
 
@@ -35,24 +31,41 @@ class BacktestEngine:
 
         # Load data up to end_now for *features* availability
         engine_cfg = self.cfg.raw.get("engine", {})
-        end_now = pd.to_datetime(engine_cfg.get("end_now")) if engine_cfg.get("end_now") else None
+        end_now = None
+        if engine_cfg.get("end_now"):
+            end_now = pd.Timestamp(engine_cfg["end_now"])
+            end_now = end_now.tz_convert("UTC") if end_now.tzinfo else end_now.tz_localize("UTC")
         full = ds.load(end_now=end_now)
 
-        start = pd.to_datetime(engine_cfg.get("start")) if engine_cfg.get("start") else full.index.get_level_values(0).min()
-        end = pd.to_datetime(engine_cfg.get("end")) if engine_cfg.get("end") else full.index.get_level_values(0).max()
+        if engine_cfg.get("start"):
+            start = pd.Timestamp(engine_cfg["start"])
+            start = start.tz_convert("UTC") if start.tzinfo else start.tz_localize("UTC")
+        else:
+            start = full.index.get_level_values(0).min()
+
+        if engine_cfg.get("end"):
+            end = pd.Timestamp(engine_cfg["end"])
+            end = end.tz_convert("UTC") if end.tzinfo else end.tz_localize("UTC")
+        else:
+            end = full.index.get_level_values(0).max()
 
         days = [d for d in entry_days(full) if (d >= start and d <= end)]
         log.info("Running backtest from %s to %s (%d days)", start.date(), end.date(), len(days))
 
-        daily_pnl = {}
+        daily_pnl: dict[pd.Timestamp, float] = {}
         for i, day in enumerate(days):
             # Fit on strictly prior days
-            past = full.loc[pd.IndexSlice[: day - pd.Timedelta("1ns"), :]]
-            today = full.loc[(day, slice(None))]
-            log.debug("Day %s: fit on %d rows, predict on 24", day, len(past))
+            past = full.loc[pd.IndexSlice[: day - pd.Timedelta("1ns"), :], :]
+            today = full.loc[pd.IndexSlice[[day], :], :]
+
+            log.debug("Day %s: fit on %d rows, predict on %d", day, len(past), len(today))
 
             model.fit(past)
             preds = model.predict(today)
+
+            hours_today = today.index.get_level_values("hour").astype(int).to_numpy()
+            if len(preds) != len(hours_today):
+                preds = preds[hours_today]
 
             # Policy -> targets -> risk
             lo, hi = tuple(self.cfg.raw.get("risk", {}).get("per_hour_bounds", [-10, 10]))
