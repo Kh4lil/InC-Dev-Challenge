@@ -77,5 +77,6 @@ class BacktestEngine:
             daily_pnl[day] = res["daily_pnl"]
 
         pnl_series = pd.Series(daily_pnl).sort_index()
-        reporter.save(pnl_series)
+        # pass config so reporter can snapshot and write a summary
+        reporter.save(pnl_series, config=self.cfg.raw)
         log.info("Done. Metrics and plot saved to %s", artifacts)
