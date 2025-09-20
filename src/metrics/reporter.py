@@ -50,6 +50,62 @@ class Reporter:
         plt.savefig(self.artifacts / "cumulative_pnl.png")
         plt.close()
 
+        # IS vs OOS split metrics
+        split_md_lines: list[str] = []
+        split_html_rows: list[str] = []
+        split_cfg = (config or {}).get("report", {}) if config else {}
+        split_date = split_cfg.get("split_date")
+        if split_date:
+            try:
+                split_ts = pd.Timestamp(split_date)
+                if hasattr(daily_pnl.index, "tz") and daily_pnl.index.tz is not None:
+                    split_ts = split_ts.tz_convert("UTC") if split_ts.tzinfo else split_ts.tz_localize("UTC")
+            except Exception:
+                split_ts = None
+
+            if split_ts is not None:
+                is_mask = daily_pnl.index < split_ts
+                oos_mask = daily_pnl.index >= split_ts
+
+                def slice_metrics(s: pd.Series) -> dict:
+                    n = int(len(s))
+                    if n == 0:
+                        return {"days": 0, "total": 0.0, "mean": 0.0, "stdev": 0.0, "sharpe": 0.0, "min_dd": 0.0}
+                    cum_s = s.cumsum()
+                    total = float(s.sum())
+                    mean_ = float(s.mean())
+                    std_ = float(s.std(ddof=1)) if n > 1 else 0.0
+                    shrp = float(np.sqrt(252) * (mean_ / (std_ + 1e-12))) if n > 1 else 0.0
+                    dd = float((cum_s - cum_s.cummax()).min())
+                    return {"days": n, "total": total, "mean": mean_, "stdev": std_, "sharpe": shrp, "min_dd": dd}
+
+                is_metrics = slice_metrics(daily_pnl[is_mask])
+                oos_metrics = slice_metrics(daily_pnl[oos_mask])
+
+                # Markdown section
+                split_md_lines.extend([
+                    "",
+                    "## In-Sample vs Out-of-Sample",
+                    "",
+                    f"Split date: `{split_ts}`",
+                    "",
+                    "| Slice | Days | Total P&L | Mean | Stdev | Sharpe | Min DD |",
+                    "|------:|-----:|----------:|-----:|------:|-------:|-------:|",
+                    f"| IS (< split) | {is_metrics['days']} | {is_metrics['total']:.2f} | {is_metrics['mean']:.4f} | {is_metrics['stdev']:.4f} | {is_metrics['sharpe']:.2f} | {is_metrics['min_dd']:.2f} |",
+                    f"| OOS (≥ split) | {oos_metrics['days']} | {oos_metrics['total']:.2f} | {oos_metrics['mean']:.4f} | {oos_metrics['stdev']:.4f} | {oos_metrics['sharpe']:.2f} | {oos_metrics['min_dd']:.2f} |",
+                ])
+
+                # HTML table rows
+                def html_row(label: str, m: dict) -> str:
+                    return (
+                        f"<tr><th>{label}</th>"
+                        f"<td>{m['days']}</td><td>{m['total']:.2f}</td>"
+                        f"<td>{m['mean']:.6f}</td><td>{m['stdev']:.6f}</td>"
+                        f"<td>{m['sharpe']:.2f}</td><td>{m['min_dd']:.2f}</td></tr>"
+                    )
+                split_html_rows.append(html_row("IS (&lt; split)", is_metrics))
+                split_html_rows.append(html_row("OOS (&ge; split)", oos_metrics))
+
         # Markdown summary
         md = [
             "# Backtest Summary",
@@ -71,6 +127,8 @@ class Reporter:
             "- `cumulative_pnl.png`",
             "- `summary.html`",
         ]
+        if split_md_lines:
+            md.extend(split_md_lines)
         (self.artifacts / "summary.md").write_text("\n".join(md))
 
         # HTML summary
@@ -107,6 +165,24 @@ class Reporter:
 
 <h2>Plot</h2>
 <img src="cumulative_pnl.png" alt="Cumulative P&L"/>
+"""
+
+        if split_html_rows:
+            html += """
+<h2>In-Sample vs Out-of-Sample</h2>
+<table>
+  <thead>
+    <tr><th>Slice</th><th>Days</th><th>Total P&L</th><th>Mean</th><th>Stdev</th><th>Sharpe</th><th>Min DD</th></tr>
+  </thead>
+  <tbody>
+"""
+            html += "\n".join(split_html_rows)
+            html += """
+  </tbody>
+</table>
+"""
+
+        html += """
 </body>
 </html>"""
         (self.artifacts / "summary.html").write_text(html)

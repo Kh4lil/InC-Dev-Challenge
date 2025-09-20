@@ -1,0 +1,21 @@
+run: { run_id: "ridge", artifacts_dir: "artifacts" }
+data: { path: "data_dah.csv" }
+engine:
+  start: "2059-01-05"
+  end: "2060-12-30"
+  end_now: "2060-05-31 11:50:00+01:00"
+risk: { per_hour_bounds: [-10, 10], daily_abs_cap: 120 }
+costs: { fee_per_mwh: 0.05, bps_per_trade: 1.0 }
+components:
+  datasource: "src.data.datasource:CSVDayaheadDataSource"
+  model: "src.models.ridge:RidgeModel"
+  policy: "src.strategy.linear_scaler:LinearScalerPolicy"
+  risk: "src.risk.manager:SimpleRiskManager"
+  broker: "src.exec.broker:SimpleBroker"
+  reporter: "src.metrics.reporter:Reporter"
+
+policy:
+  scale: 3.0
+  threshold: 0.05
+report:
+  split_date: "2060-01-01"
