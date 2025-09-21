@@ -14,21 +14,23 @@ class Reporter:
 
     def save(self, daily_pnl: pd.Series, config: dict | None = None) -> None:
         """
-        Writes:
-          - metrics.json   (numeric run metrics)
-          - cumulative_pnl.png (plot of cumulative P&L)
-          - summary.md     (concise markdown summary)
-          - summary.html   (simple HTML summary with inline CSS)
-          - config.snapshot.yaml (if config provided and pyyaml available)
+        Writes per run:
+          - metrics.json
+          - cumulative_pnl.png
+          - summary.md
+          - summary.html
+          - config.snapshot.yaml (if config provided and PyYAML available)
+
+        includes an IS vs OOS metric section computed by that split.
         """
-        # Metrics JSON
-        cum = daily_pnl.cumsum()
+        # metrics
         days = int(len(daily_pnl))
-        total_pnl = float(daily_pnl.sum())
+        cum = daily_pnl.cumsum() if days > 0 else pd.Series(dtype="float64")
+        total_pnl = float(daily_pnl.sum()) if days > 0 else 0.0
         mean_daily = float(daily_pnl.mean()) if days > 0 else 0.0
         stdev_daily = float(daily_pnl.std(ddof=1)) if days > 1 else 0.0
         sharpe = float(np.sqrt(252) * (mean_daily / (stdev_daily + 1e-12))) if days > 1 else 0.0
-        min_dd = float((cum - cum.cummax()).min() if days > 0 else 0.0)
+        min_dd = float((cum - cum.cummax()).min()) if days > 0 else 0.0
 
         metrics = {
             "days": days,
@@ -42,10 +44,19 @@ class Reporter:
 
         # Cumulative P&L plot
         plt.figure()
-        cum.plot()
-        plt.title("Cumulative P&L")
-        plt.xlabel("Date")
-        plt.ylabel("P&L")
+        if days > 0:
+            cum.plot()
+            plt.title("Cumulative P&L")
+            plt.xlabel("Date")
+            plt.ylabel("P&L")
+        else:
+            plt.title("Cumulative P&L")
+            plt.axis("off")
+            plt.text(
+                0.5, 0.5,
+                "No data to plot\n(resume caught up to end_now)",
+                ha="center", va="center", fontsize=12
+            )
         plt.tight_layout()
         plt.savefig(self.artifacts / "cumulative_pnl.png")
         plt.close()
@@ -55,7 +66,7 @@ class Reporter:
         split_html_rows: list[str] = []
         split_cfg = (config or {}).get("report", {}) if config else {}
         split_date = split_cfg.get("split_date")
-        if split_date:
+        if split_date and days > 0:
             try:
                 split_ts = pd.Timestamp(split_date)
                 if hasattr(daily_pnl.index, "tz") and daily_pnl.index.tz is not None:
@@ -95,7 +106,7 @@ class Reporter:
                     f"| OOS (≥ split) | {oos_metrics['days']} | {oos_metrics['total']:.2f} | {oos_metrics['mean']:.4f} | {oos_metrics['stdev']:.4f} | {oos_metrics['sharpe']:.2f} | {oos_metrics['min_dd']:.2f} |",
                 ])
 
-                # HTML table rows
+                # HTML grid rows
                 def html_row(label: str, m: dict) -> str:
                     return (
                         f"<tr><th>{label}</th>"
@@ -127,6 +138,8 @@ class Reporter:
             "- `cumulative_pnl.png`",
             "- `summary.html`",
         ]
+        if days == 0:
+            md.append("\n_Resume caught up to `end_now`; no new days were processed in this run._\n")
         if split_md_lines:
             md.extend(split_md_lines)
         (self.artifacts / "summary.md").write_text("\n".join(md))
@@ -143,6 +156,9 @@ class Reporter:
  .grid {{ display: grid; grid-template-columns: 200px 1fr; gap: 8px 16px; max-width: 540px; }}
  .label {{ color: #555; }}
  img {{ max-width: 960px; width: 100%; height: auto; margin-top: 16px; border: 1px solid #eee; }}
+ table {{ border-collapse: collapse; margin-top: 16px; }}
+ th, td {{ border: 1px solid #eee; padding: 6px 10px; text-align: right; }}
+ th:first-child, td:first-child {{ text-align: left; }}
 </style>
 </head>
 <body>
@@ -166,6 +182,8 @@ class Reporter:
 <h2>Plot</h2>
 <img src="cumulative_pnl.png" alt="Cumulative P&L"/>
 """
+        if days == 0:
+            html += "\n<p><em>Resume caught up to <code>end_now</code>; no new days were processed in this run.</em></p>\n"
 
         if split_html_rows:
             html += """
@@ -195,4 +213,5 @@ class Reporter:
                     yaml.safe_dump(config, sort_keys=False)
                 )
             except Exception:
+                # snapshot is optional; ignore if PyYAML unavailable
                 pass
